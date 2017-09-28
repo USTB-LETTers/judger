@@ -63,12 +63,8 @@ def check(input_file_path, output_file_path, answer_file_path, method='file'):
         raise CrazyBoxError('check method value error')
     checker = os.path.join(os.getcwd(), 'checkers', method)
     cmd = ' '.join([checker, input_file_path, output_file_path, answer_file_path])
-    data = {'input': get_data(input_file_path),
-            'output': get_data(input_file_path),
-            'answer': get_data(input_file_path)
-            }
     status, result = subprocess.getstatusoutput(cmd)
-    return status, result, data
+    return status, result, get_data(input_file_path), get_data(output_file_path), get_data(answer_file_path)
 
 
 def compile_all():
@@ -91,7 +87,7 @@ def compile_all():
 
 if __name__ == '__main__':
     base = os.path.join(os.getcwd(), 'checkers', 'test')
-    ss, rr, data = check(os.path.join(base, '1.in'), os.path.join(base, '1.out'), os.path.join(base, '1.ans'), 'nhuge')
+    ss, rr, dat = check(os.path.join(base, '1.in'), os.path.join(base, '1.out'), os.path.join(base, '1.ans'), 'nhuge')
     print(ss)
     print(rr)
     rr = rr + rr + rr + "test set"

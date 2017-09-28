@@ -112,7 +112,9 @@ def create_container(container_name, command, volume_name,
                      time_limit, memory_limit=512 * 1024 * 1024, file_size_limit=10 * 1024 * 1024, data_dir=None):
 
     real_time_limit, memory, ulimits = generate_args(time_limit, memory_limit, file_size_limit)
-    logger.debug("container : %s s %s", real_time_limit, memory)
+
+    # logger.debug("container limit: %sS %s", real_time_limit, memory.upper())
+
     volumes = generate_volumes(volume_name, data_dir)
     try:
         crazybox = client.containers.create(image='crazybox:latest',
@@ -225,6 +227,25 @@ def compress_code(src_code, file_name_suffix, name=None):
             logger.info("temporary file removed")
 
 
+@contextmanager
+def extract_tar(tar_path):
+    out_file_path = None
+    try:
+        if os.path.exists(tar_path):
+            tar = tarfile.open(tar_path)
+            file_name = tar.getnames()[0]
+            tar.extract(file_name, TEMP_DIR)
+            out_file_path = os.path.join(TEMP_DIR, file_name)
+
+        yield out_file_path
+
+    finally:
+        if os.path.exists(tar_path):
+            os.remove(tar_path)
+        if os.path.exists(out_file_path):
+            os.remove(out_file_path)
+
+
 def replace_arg(command, src_path, exe_path, max_memory=None):
     try:
         command = command.format(src_path=src_path, exe_path=exe_path)
@@ -269,3 +290,5 @@ def get_tar_hash(path):
 
     except ValueError:
         return -1
+
+

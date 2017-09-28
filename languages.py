@@ -5,12 +5,12 @@ LANG = {
         "compile_max_cpu_time": 5000,  # 5s
         "compile_max_memory": 128 * 1024 * 1024,  # 128M
         'compile_command': '/usr/bin/gcc -DONLINE_JUDGE -O2 -w -fmax-errors=3 -std=c99 {src_path} -lm -o {exe_path}',
-        'run': '{exe_path}',
+        'run_command': '{exe_path}',
     },
 
     "C++": {
         'suffix': '.cpp',
-        "compile_max_cpu_time": 500000,  # 5s
+        "compile_max_cpu_time": 5000,  # 5s
         "compile_max_memory": 256 * 1024 * 1024,  # 256M
         'compile_command': '/usr/bin/g++ -DONLINE_JUDGE -O2 -w -fmax-errors=3 -std=c++11 {src_path} -lm -o {exe_path}',
         'run_command': '{exe_path}',

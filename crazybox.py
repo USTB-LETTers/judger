@@ -6,10 +6,12 @@ from docker.errors import APIError
 from logzero import logger
 
 from config import TEMP_DIR, TEST_DATA_DIR, WORKING_DIR
+from result import *
 from exceptions import CrazyBoxError
 
 from utils import create_container, run_container
-from utils import working_volume, compress_code, replace_arg, get_tar_hash, get_file_hash
+from utils import working_volume, compress_code, replace_arg, extract_tar
+from checker import check
 
 from languages import LANG
 
@@ -43,9 +45,6 @@ def _run(name, volume_name, command, data_dir, data_file_name,
 
     command = '/bin/bash -c "{}"'.format(command)
 
-    if use_time:
-        logger.info(command)
-
     crazybox, real_time_limit = create_container(box_name, command, volume_name,
                                                  time_limit, memory_limit, file_size_limit, data_dir)
 
@@ -63,7 +62,6 @@ def _run(name, volume_name, command, data_dir, data_file_name,
             data = crazybox.get_archive('/crazybox/{}.out'.format(name))
             tar_path = os.path.join(TEMP_DIR, str(name).split('-')[0] + '-out.tar')
             with open(tar_path, 'w') as file:
-                logger.info(tar_path)
                 file.write(data[0].read().decode())
         except APIError:
             tar_path = None
@@ -71,7 +69,9 @@ def _run(name, volume_name, command, data_dir, data_file_name,
         return ret, tar_path
 
 
-def judge(src_code, language, test_data_dir, time_limit, memory_limit, file_size_limit=10 * 1024 * 1024):
+def judge(src_code, language, test_data_dir,
+          time_limit, memory_limit, file_size_limit=10 * 1024 * 1024,
+          check_method='line'):
     """
 
     :param src_code: 源代码
@@ -80,6 +80,7 @@ def judge(src_code, language, test_data_dir, time_limit, memory_limit, file_size
     :param time_limit: 时间限制 单位：s
     :param memory_limit: 内存限制 单位：MB
     :param file_size_limit: 文件大小限制 (update: 似乎被docker.py转为Byte)单位：block 查看utils.py中generate_ulimits函数说明
+    :param check_method: 查看checker.py文件
     :return:
     """
     language = str(language).capitalize()
@@ -88,6 +89,10 @@ def judge(src_code, language, test_data_dir, time_limit, memory_limit, file_size
     language = LANG[language]
     suffix = language['suffix']
     exe_suffix = language['exe_suffix'] if 'exe_suffix' in language else ''
+
+    # info用来给维护者debug　msg用来显示给前台用户
+    result = {'status': None, 'info': '', 'msg': '', 'time': 0, 'memory': 0,  # ms KB
+              'compile_time': None, 'compile_exit_code': None, 'detail': []}
 
     with working_volume() as volume_name, compress_code(src_code, suffix) as file_name:
         src_path = os.path.join(WORKING_DIR, file_name + suffix)
@@ -98,13 +103,17 @@ def judge(src_code, language, test_data_dir, time_limit, memory_limit, file_size
         compile_memory_limit = language['compile_max_memory'] / 1024 / 1024
 
         ret = _compile(file_name, volume_name, compile_cmd, compile_time_limit, compile_memory_limit)
+
+        result['compile_time'] = ret['duration']
+        result['compile_exit_code'] = ret['exit_code']
+
         if ret['exit_code'] != 0:
-            info = ret['stdout'].decode()
-            if ret['stderr'].decode():
-                info += ' |-| ' + ret['stderr'].decode()
-            logger.warning('complied failed(exit code: %s, time: %s): %s', ret['exit_code'], ret['duration'], info)
-            return
-        logger.info('complied time: %s', ret['duration'])
+            err = ret['stderr'].decode()
+            logger.warning('complied failed(exit code: %s, time: %s): %s', ret['exit_code'], ret['duration'], err)
+            result['status'] = CE
+            result['info'] = err
+            result['msg'] = err
+            return result
 
         run_cmd = replace_arg(language['run_command'], src_path, exe_path)
 
@@ -119,41 +128,110 @@ def judge(src_code, language, test_data_dir, time_limit, memory_limit, file_size
         name_list.sort()
 
         for data_name in name_list:
-            ret, tar_path = _run(file_name, volume_name, run_cmd, test_data_dir, data_name,
-                                 time_limit, memory_limit, file_size_limit)
-
             logger.info('----running on case: %s----', data_name)
-            if ret['exit_code'] != 0:
-                if ret['exit_code'] == 153:
-                    logger.warning('File size limit exceeded : %s MB', file_size_limit / 1024 / 1024)
-                elif ret['oom_killed']:
-                    logger.warning('memory limit exceeded : %s MB', memory_limit)
-                elif ret['timeout']:
-                    logger.warning('time limit exceeded : %s s', time_limit)
+
+            ret, tar_path = _run(file_name, volume_name, run_cmd, test_data_dir, data_name,
+                                 time_limit, memory_limit * 2, file_size_limit)
+
+            with extract_tar(tar_path) as out_file_path:
+                in_file_path = os.path.join(test_data_dir, data_name + '.in')
+                answer_file_path = os.path.join(test_data_dir, data_name + '.out')
+                used_time = str(int(ret['duration'] * 1000)) + ' ms' if ret['duration'] else None
+                sub_result = {'test': data_name, 'time': used_time, 'memory': None,
+                              'exit code': ret['exit_code'],  'checker exit code': None, 'verdict': None,
+                              'input': None, 'output': None, 'answer': None, 'log': None}
+
+                if ret['exit_code'] != 0:
+                    if ret['exit_code'] == 153:
+                        info = 'File size limit exceeded : %s MB' % (file_size_limit / 1024 / 1024)
+                        msg = 'Output limit exceed on test %s' % data_name
+                        sub_result['verdict'] = 'Output Limit Exceed'
+                        result['status'] = OLE
+
+                    elif ret['oom_killed']:
+                        info = 'memory limit exceeded : %s MB' % memory_limit
+                        msg = 'Memory limit exceed on test %s' % data_name
+                        sub_result['verdict'] = 'Memory Limit Exceed'
+                        result['status'] = MLE
+
+                    elif ret['timeout']:
+                        info = 'time limit exceeded : %s s' % time_limit
+                        msg = 'Time limit exceed on test %s' % data_name
+                        sub_result['verdict'] = 'Time Limit Exceed'
+                        result['status'] = TLE
+
+                    else:
+                        info = ret['stdout'].decode() + '\n' + ret['stderr'].decode()
+                        msg = 'Runtime error on test %s' % data_name
+                        sub_result['verdict'] = 'Runtime Error'
+                        result['status'] = RE
+
+                    logger.warning(info)
+                    result['info'] = info
+                    result['msg'] = msg
+                    result['detail'].append(sub_result)
+                    return result
+
+                used_maximum_memory = _run(file_name, volume_name, run_cmd, test_data_dir, data_name,
+                                           time_limit, memory_limit * 2, file_size_limit, use_time=True)
+
+                if int(used_maximum_memory) / 1024 >= memory_limit:
+                    result['info'] = 'memory limit exceeded : %s MB' % memory_limit
+                    result['msg'] = 'Memory limit exceed on test %s' % data_name
+                    sub_result['verdict'] = 'Memory Limit Exceed'
+                    result['detail'].append(sub_result)
+                    return result
+
+                result['time'] = max(result['time'], int(ret['duration'] * 1000))
+                result['memory'] = max(result['memory'], int(used_maximum_memory))
+
+                sub_result['memory'] = str(used_maximum_memory) + ' KB'
+
+                sub_result['checker exit code'], sub_result['log'], \
+                    sub_result['input'], sub_result['output'], sub_result['answer'] \
+                    = check(in_file_path, out_file_path, answer_file_path)
+                code = sub_result['checker exit code']
+
+                # info msg status
+                if code == 0:
+                    sub_result['verdict'] = 'OK'
+                    result['detail'].append(sub_result)
                 else:
-                    logger.warning('No catch for the exit code: %s', ret['exit_code'])
-                    logger.warning('%s |-| %s', ret['stdout'].decode(),  ret['stderr'].decode())
-                return
-            logger.debug('check answer')
+                    if code == 1:
+                        sub_result['verdict'] = 'Wrong Answer'
+                        info = msg = 'Wrong answer on test %s' % data_name
+                    elif code == 2:
+                        sub_result['verdict'] = 'Presentation Error'
+                        info = msg = 'Presentation error on test %s' % data_name
+                    else:
+                        sub_result['verdict'] = 'Judgement Failed'
+                        info = 'check method({}) error: {}'.format(check_method, os.path.join(test_data_dir, data_name))
+                        msg = 'judge failed, please contact manager.'
 
-            used_maximum_memory = _run(file_name, volume_name, run_cmd, test_data_dir, data_name,
-                                       time_limit, memory_limit, file_size_limit, use_time=True)
-            logger.info('used memory: %s KB, used time: %s s', used_maximum_memory, ret['duration'])
+                    result['info'] = info
+                    result['msg'] = msg
+                    result['detail'].append(sub_result)
+                    return result
 
-            answer_hash = get_file_hash(os.path.join(test_data_dir, data_name + '.out'))
-            output_hash = get_tar_hash(tar_path)
+    result['status'] = AC
+    return result
 
-            if answer_hash == output_hash:
-                logger.debug('answer accept')
-            else:
-                logger.debug('answer reject')
-                return
+
+def test():
+    code_path = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/new.py'
+    data_dir = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/solio/H/tests'
+    with open(code_path) as file:
+        ret = judge(file.read(), 'python3', data_dir, 3, 128)
+        print(ret)
 
 
 if __name__ == '__main__':
-    code_path = '/home/xjw/Desktop/crazyX/project/OnlineJudge2.0/crazybox/judger/test_data/1/a.cpp'
-    # code_path =  '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/H.cpp'
-    data_dir = '/home/xjw/Desktop/crazyX/project/OnlineJudge2.0/crazybox/judger/test_data/1/'
-    # data_dir = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/solio/H/tests'
-    with open(code_path) as file:
-        judge(file.read(), 'c++', data_dir, 1, 64)
+    test()
+    #
+    #
+    # code_path = '/home/xjw/Desktop/crazyX/project/OnlineJudge2.0/crazybox/judger/test_data/1/a.cpp'
+    # # code_path =  '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/H.cpp'
+    # data_dir = '/home/xjw/Desktop/crazyX/project/OnlineJudge2.0/crazybox/judger/test_data/1/'
+    # # data_dir = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/solio/H/tests'
+    # with open(code_path) as file:
+    #     judge(file.read(), 'c++', data_dir, 1, 64)
