@@ -3,8 +3,8 @@ import os
 import uuid
 import signal
 import docker
-import hashlib
 import tarfile
+import checksumdir
 
 from contextlib import contextmanager
 
@@ -265,30 +265,8 @@ def replace_arg(command, src_path, exe_path, max_memory=None):
     return command
 
 
-def get_file_hash(path):
-    if not path:
+def get_dir_hash(directory):
+    if os.path.exists(directory):
+        return checksumdir.dirhash(directory, 'sha256')
+    else:
         return -1
-    hash_sum = hashlib.md5()
-    hash_sum.update(open(path).read().strip().encode('utf-8'))
-    return hash_sum.hexdigest()
-
-
-def get_tar_hash(path):
-    if not path:
-        return -1
-    try:
-        tar = tarfile.open(path)
-        file_name = tar.getnames()[0]
-        tar.extract(file_name, TEMP_DIR)
-        data_path = os.path.join(TEMP_DIR, file_name)
-        ret = get_file_hash(data_path)
-
-        tar.close()
-        os.remove(path)
-        os.remove(data_path)
-        return ret
-
-    except ValueError:
-        return -1
-
-

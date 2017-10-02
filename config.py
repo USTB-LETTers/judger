@@ -7,8 +7,11 @@ from logzero import logger, LogFormatter
 
 DEBUG = True
 
-TEMP_DIR = os.path.join(os.getcwd(), 'temp')
 TEST_DATA_DIR = os.path.join(os.getcwd(), 'test_data')
+JUDGE_TOKEN = 'set this to random for token'
+
+
+TEMP_DIR = os.path.join(os.getcwd(), 'temp')
 
 WORKING_DIR = '/crazybox/'
 

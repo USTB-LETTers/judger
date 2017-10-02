@@ -1,3 +1,9 @@
+werkzeug
+checksumdir
+psutil
+flask
+flask_restful
+flask_httpauth
 python-dateutil
 docker==2.5.1
 logzero

@@ -225,8 +225,16 @@ def test():
         print(ret)
 
 
+def test2():
+    code_path = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/F.cpp'
+    data_dir = '/home/xjw/Desktop/crazyX/algorithm/code/oj/codeforces.com-gym/Gym_101174_SWERC_2016/solio/F/tests'
+    with open(code_path) as file:
+        ret = judge(file.read(), 'c++', data_dir, 1, 256)
+        print(ret)
+
+
 if __name__ == '__main__':
-    test()
+    test2()
     #
     #
     # code_path = '/home/xjw/Desktop/crazyX/project/OnlineJudge2.0/crazybox/judger/test_data/1/a.cpp'
