@@ -87,7 +87,7 @@ class SyncAPI(Resource):
             shutil.rmtree(aim, ignore_errors=True)
 
         os.mkdir(aim)
-        os.chmod(aim, 777)
+        os.chmod(aim, 0o777)
 
         path = os.path.join('/tmp', s_file.filename)
         s_file.save(path)
@@ -95,7 +95,7 @@ class SyncAPI(Resource):
         zipfile = ZipFile(path)
         for sub_file in zipfile.namelist():
             zipfile.extract(sub_file, aim)
-            os.chmod(os.path.join(aim, sub_file), 777)
+            os.chmod(os.path.join(aim, sub_file), 0o777)
         zipfile.close()
 
         os.remove(path)
@@ -137,13 +137,17 @@ class JudgeAPI(Resource):
             language = args['language']
             file_size_limit = args['file_size_limit']
             check_method = args['check_method']
-            result = judge(src_code, language, test_case_id, time_limit, memory_limit, file_size_limit, check_method)
+            test_case_dir = os.path.join(TEST_DATA_DIR, test_case_id)
+            if not os.path.isdir(test_case_dir):
+                raise CrazyBoxError('directory %s not found.' % test_case_dir)
+
+            result = judge(src_code, language, test_case_dir, time_limit, memory_limit, file_size_limit, check_method)
             return {'code': 0, 'result': result}
         except (CrazyBoxError, DockerError) as e:
             logger.exception(e)
             ret = dict()
             ret["err"] = e.__class__.__name__
-            ret["data"] = e.message
+            ret["data"] = str(e)
             return {'code': 1, 'result': ret}
         except Exception as e:
             logger.exception(e)

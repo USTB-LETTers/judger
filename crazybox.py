@@ -189,7 +189,7 @@ def judge(src_code, language, test_data_dir,
 
                 sub_result['checker exit code'], sub_result['log'], \
                     sub_result['input'], sub_result['output'], sub_result['answer'] \
-                    = check(in_file_path, out_file_path, answer_file_path)
+                    = check(in_file_path, out_file_path, answer_file_path, check_method)
                 code = sub_result['checker exit code']
 
                 # info msg status
